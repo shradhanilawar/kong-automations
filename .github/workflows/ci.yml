@@ -1,0 +1,44 @@
+name: API CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  KONG_ADMIN_URL: https://4f1b-103-184-87-251.ngrok-free.app                                          
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install Newman
+        run: npm install -g newman
+
+      - name: Install Kong decK
+        uses: kong/setup-deck@v1
+
+      - name: Check Kong decK Connection
+        run: deck gateway ping --kong-addr $KONG_ADMIN_URL
+
+      - name: Validate Kong YAML File
+        run: deck file validate kong/kong.yml
+
+      - name: Check Difference In Configuration
+        run: deck gateway diff kong/kong.yml --kong-addr $KONG_ADMIN_URL
+
+      - name: Sync Config to Kong
+        run: deck gateway sync kong/kong.yml --kong-addr $KONG_ADMIN_URL
+
+      - name: Run API tests
+        run: newman run postman/fact-service-test.postman_collection.json

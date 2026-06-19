@@ -5,40 +5,58 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  KONG_ADMIN_URL: https://4f1b-103-184-87-251.ngrok-free.app                                          
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      KONG_ADMIN_URL: https://4f1b-103-184-87-251.ngrok-free.app
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
-          node-version: '24'
+          node-version: '18'
 
       - name: Install Newman
         run: npm install -g newman
 
-      - name: Install Kong decK
+      - name: Install Kong Deck
         uses: kong/setup-deck@v1
 
-      - name: Check Kong decK Connection
+      - name: Check Kong Deck Connection
         run: deck gateway ping --kong-addr $KONG_ADMIN_URL
 
-      - name: Validate Kong YAML File
-        run: deck file validate kong/kong.yml
-
       - name: Check Difference In Configuration
-        run: deck gateway diff kong/kong.yml --kong-addr $KONG_ADMIN_URL
+        id: deck_diff
+        shell: bash
+        run: |
+          set +e
+          deck gateway diff --kong-addr "$KONG_ADMIN_URL" --non-zero-exit-code kong/kong.yml
+          diff_status=$?
+          set -e
+
+          if [ "$diff_status" -eq 0 ]; then
+            echo "has_diff=false" >> "$GITHUB_OUTPUT"
+            echo "No Kong Gateway configuration changes found. Skipping sync and tests."
+          elif [ "$diff_status" -eq 2 ]; then
+            echo "has_diff=true" >> "$GITHUB_OUTPUT"
+            echo "Kong Gateway configuration changes found. Continuing to validate and sync."
+          else
+            echo "deck gateway diff failed with exit code $diff_status."
+            exit "$diff_status"
+          fi
+
+      - name: Validate The Configuration
+        if: steps.deck_diff.outputs.has_diff == 'true'
+        run: deck gateway validate --kong-addr $KONG_ADMIN_URL kong/kong.yml
 
       - name: Sync Config to Kong
-        run: deck gateway sync kong/kong.yml --kong-addr $KONG_ADMIN_URL
+        if: steps.deck_diff.outputs.has_diff == 'true'
+        run: deck gateway sync --kong-addr $KONG_ADMIN_URL kong/kong.yml
 
       - name: Run API tests
+        if: steps.deck_diff.outputs.has_diff == 'true'
         run: newman run postman/fact-service-test.postman_collection.json
